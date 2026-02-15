@@ -1,0 +1,40 @@
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    mem_reservation: 18gb
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+
+  # clawd:
+  #   image: clawdbot/core:latest
+  #   container_name: clawd
+  #   ports:
+  #     - "18789:18789"
+  #   volumes:
+  #     - ./config:/app/config
+  #     - ./workspace:/app/workspace
+  #   restart: unless-stopped
+
+  # Vast.ai CLI: no arranca por defecto. Uso: docker compose --profile vast run --rm vastai ...
+  vastai:
+    build: ./vastai
+    image: ollama-test-vastai:latest
+    container_name: vastai
+    profiles:
+      - vast
+    volumes:
+      # Persistir API key (el CLI escribe en ~/.config/vastai/vast_api_key)
+      - ./vastai-config:/root/.config/vastai
+    working_dir: /workspace
+
+volumes:
+  ollama:
+
+# docker exec -it ollama ollama pull llama3.1:8b
+# docker-compose exec ollama ollama pull llama3.1:8b
+# llama3.3
