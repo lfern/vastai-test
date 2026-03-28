@@ -1,15 +1,34 @@
 
+# Arquitectura:
+#   [clawd] → ollama-proxy:11434 → vastai CLI → instancia GPU remota
+#
+# ollama-proxy actúa como Ollama ante cualquier cliente. Gestiona el ciclo de vida
+# de Vast.ai de forma autónoma: lanza la instancia cuando llega una petición y la
+# para tras N min de inactividad.
+
 services:
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
+
+  # Proxy Ollama-compatible que gestiona el ciclo de vida de Vast.ai.
+  # Es el único servicio necesario ahora mismo.
+  ollama-proxy:
+    build: ./ollama-proxy
+    image: ollama-test-proxy:latest
+    container_name: ollama-proxy
     ports:
       - "11434:11434"
-    mem_reservation: 18gb
     volumes:
-      - ollama:/root/.ollama
+      - ./vastai-config:/root/.config/vastai   # API key de Vast.ai
+    environment:
+      - REMOTE_MODEL=glm-4.7-flash             # modelo a cargar en Vast.ai
+      - INACTIVITY_MINUTES=15                  # para la instancia tras N min sin uso
+      - SEARCH_QUERY=dph<0.15 reliability>0.999 gpu_name=RTX_3090 num_gpus=1 gpu_ram>=24 cpu_ram>=32 disk_space>=32
+      - INSTANCE_IMAGE=vastai/ollama:0.15.4
+      - INSTANCE_DISK_GB=32
+      - LAUNCH_MAX_RETRIES=5
+      - LAUNCH_TIMEOUT_MIN=12
     restart: unless-stopped
 
+  # Chat UI. Descomentar cuando esté listo para usar.
   # clawd:
   #   image: clawdbot/core:latest
   #   container_name: clawd
@@ -18,23 +37,21 @@ services:
   #   volumes:
   #     - ./config:/app/config
   #     - ./workspace:/app/workspace
+  #   environment:
+  #     - OLLAMA_API_KEY=ollama-local
+  #     - OLLAMA_BASE_URL=http://ollama-proxy:11434
+  #   depends_on:
+  #     - ollama-proxy
   #   restart: unless-stopped
 
-  # Vast.ai CLI: no arranca por defecto. Uso: docker compose --profile vast run --rm vastai ...
-  vastai:
-    build: ./vastai
-    image: ollama-test-vastai:latest
-    container_name: vastai
-    profiles:
-      - vast
-    volumes:
-      # Persistir API key (el CLI escribe en ~/.config/vastai/vast_api_key)
-      - ./vastai-config:/root/.config/vastai
-    working_dir: /workspace
-
-volumes:
-  ollama:
-
-# docker exec -it ollama ollama pull llama3.1:8b
-# docker-compose exec ollama ollama pull llama3.1:8b
-# llama3.3
+  # CLI de Vast.ai para uso manual desde la máquina host (scripts en vastai-scripts/).
+  # No arranca por defecto. Uso: docker compose --profile vast run --rm vastai <cmd>
+  # vastai:
+  #   build: ./vastai
+  #   image: ollama-test-vastai:latest
+  #   container_name: vastai
+  #   profiles:
+  #     - vast
+  #   volumes:
+  #     - ./vastai-config:/root/.config/vastai
+  #   working_dir: /workspace

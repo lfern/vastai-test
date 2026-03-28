@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VastAI Proxy</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0f1117;
+      --surface:  #1a1d27;
+      --border:   #2a2d3a;
+      --text:     #e2e4ed;
+      --muted:    #7a7f99;
+      --green:    #22c55e;
+      --orange:   #f59e0b;
+      --red:      #ef4444;
+      --blue:     #3b82f6;
+      --radius:   10px;
+    }
+
+    body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif;
+           font-size: 14px; line-height: 1.6; }
+
+    header { padding: 16px 24px; border-bottom: 1px solid var(--border);
+             display: flex; align-items: center; justify-content: space-between; }
+    header h1 { font-size: 18px; font-weight: 600; }
+    #refresh-info { color: var(--muted); font-size: 12px; }
+
+    main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+           padding: 20px 24px; max-width: 1200px; }
+    main > section:last-child { grid-column: 1 / -1; }
+
+    section { background: var(--surface); border: 1px solid var(--border);
+              border-radius: var(--radius); padding: 18px; }
+    section h2 { font-size: 13px; font-weight: 600; color: var(--muted);
+                 text-transform: uppercase; letter-spacing: .06em; margin-bottom: 14px; }
+
+    /* Status badge */
+    #status-badge { display: inline-flex; align-items: center; gap: 8px;
+                    font-size: 18px; font-weight: 700; margin-bottom: 16px; }
+    #status-badge::before { content: "●"; font-size: 12px; }
+    #status-badge.stopped  { color: var(--muted); }
+    #status-badge.stopped::before  { color: var(--red); }
+    #status-badge.starting { color: var(--orange); }
+    #status-badge.starting::before { color: var(--orange); animation: blink 1s infinite; }
+    #status-badge.running  { color: var(--green); }
+    #status-badge.running::before  { color: var(--green); }
+    #status-badge.stopping { color: var(--orange); }
+    #status-badge.stopping::before { color: var(--orange); }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    /* Info table */
+    .info-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; }
+    .info-grid dt { color: var(--muted); white-space: nowrap; }
+    .info-grid dd { word-break: break-all; }
+    .info-grid a  { color: var(--blue); text-decoration: none; }
+    .info-grid a:hover { text-decoration: underline; }
+
+    /* Buttons */
+    .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    button { padding: 8px 16px; border-radius: 6px; border: none; cursor: pointer;
+             font-size: 13px; font-weight: 500; transition: opacity .15s; }
+    button:disabled { opacity: .35; cursor: not-allowed; }
+    button:not(:disabled):hover { opacity: .85; }
+    .btn-green  { background: var(--green);  color: #000; }
+    .btn-orange { background: var(--orange); color: #000; }
+    .btn-red    { background: var(--red);    color: #fff; }
+    .btn-muted  { background: var(--border); color: var(--text); }
+
+    /* Instances table */
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th    { color: var(--muted); font-weight: 500; text-align: left;
+            padding: 4px 8px; border-bottom: 1px solid var(--border); }
+    td    { padding: 5px 8px; border-bottom: 1px solid var(--border); }
+    tr:last-child td { border-bottom: none; }
+    .status-pill { padding: 2px 7px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+    .pill-running  { background: #15532520; color: var(--green); border: 1px solid var(--green); }
+    .pill-loading  { background: #78350f20; color: var(--orange); border: 1px solid var(--orange); }
+    .pill-other    { background: #1e1e2e;   color: var(--muted);  border: 1px solid var(--border); }
+    .btn-sm { padding: 3px 8px; font-size: 11px; }
+
+    /* Log console */
+    #log-wrap { position: relative; }
+    #log-output { background: #080a10; border: 1px solid var(--border); border-radius: 6px;
+                  padding: 12px; height: 280px; overflow-y: auto; font-family: monospace;
+                  font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
+    .log-INFO    { color: #94a3b8; }
+    .log-WARNING { color: var(--orange); }
+    .log-ERROR   { color: var(--red); }
+    .log-DEBUG   { color: #4b5563; }
+    #log-controls { display: flex; justify-content: space-between; align-items: center;
+                    margin-bottom: 8px; }
+    #autoscroll-label { color: var(--muted); font-size: 12px; display: flex;
+                        align-items: center; gap: 6px; cursor: pointer; }
+
+    #toast { position: fixed; bottom: 24px; right: 24px; background: var(--surface);
+             border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px;
+             font-size: 13px; opacity: 0; transition: opacity .3s; pointer-events: none; }
+    #toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🖥 VastAI Proxy</h1>
+  <span id="refresh-info">—</span>
+</header>
+
+<main>
+
+  <!-- Estado -->
+  <section id="sec-status">
+    <h2>Estado</h2>
+    <div id="status-badge" class="stopped">STOPPED</div>
+    <dl class="info-grid">
+      <dt>Instance ID</dt>  <dd id="val-id">—</dd>
+      <dt>Ollama URL</dt>   <dd id="val-url">—</dd>
+      <dt>Modelo</dt>       <dd id="val-model">—</dd>
+      <dt>Inactividad</dt>  <dd id="val-idle">—</dd>
+      <dt>Se para en</dt>   <dd id="val-stops">—</dd>
+    </dl>
+  </section>
+
+  <!-- Control manual -->
+  <section id="sec-controls">
+    <h2>Control manual</h2>
+    <div class="btn-row" style="margin-bottom:12px">
+      <button id="btn-launch"  class="btn-green"  onclick="doAction('launch')">▶ Lanzar</button>
+      <button id="btn-stop"    class="btn-orange" onclick="doAction('stop')">⏸ Parar</button>
+      <button id="btn-destroy" class="btn-red"    onclick="confirmDestroy()">🗑 Destruir</button>
+      <button class="btn-muted" onclick="loadStatus()">↺ Refrescar</button>
+    </div>
+    <p style="color:var(--muted);font-size:12px;line-height:1.6">
+      <b>Lanzar</b>: arranca manualmente (normalmente automático).<br>
+      <b>Parar</b>: detiene la instancia pero no la borra (sigue costando en Vast.ai).<br>
+      <b>Destruir</b>: elimina la instancia definitivamente (irreversible).
+    </p>
+  </section>
+
+  <!-- Instancias en Vast.ai -->
+  <section id="sec-instances">
+    <h2>Instancias en Vast.ai
+      <button class="btn-muted btn-sm" onclick="loadInstances()" style="float:right">↺</button>
+    </h2>
+    <div id="instances-wrap"><p style="color:var(--muted)">Cargando...</p></div>
+  </section>
+
+  <!-- Logs -->
+  <section id="sec-logs" style="grid-column: 1 / -1">
+    <h2>Logs del proxy</h2>
+    <div id="log-controls">
+      <label id="autoscroll-label">
+        <input type="checkbox" id="autoscroll" checked> Auto-scroll
+      </label>
+      <button class="btn-muted btn-sm" onclick="document.getElementById('log-output').innerHTML=''">
+        Limpiar pantalla
+      </button>
+    </div>
+    <div id="log-wrap">
+      <pre id="log-output"></pre>
+    </div>
+  </section>
+
+</main>
+
+<div id="toast"></div>
+
+<script>
+  // ── Estado local ──────────────────────────────────────────────
+  let lastRefresh = 0;
+  let knownLogCount = 0;
+
+  // ── Polling ───────────────────────────────────────────────────
+  async function loadStatus() {
+    try {
+      const r = await fetch('/admin/status');
+      const d = await r.json();
+      renderStatus(d);
+    } catch(e) { console.error('status error', e); }
+    lastRefresh = Date.now();
+  }
+
+  async function loadInstances() {
+    try {
+      const r = await fetch('/admin/instances');
+      const d = await r.json();
+      renderInstances(d);
+    } catch(e) {
+      document.getElementById('instances-wrap').innerHTML =
+        `<p style="color:var(--red)">Error cargando instancias</p>`;
+    }
+  }
+
+  async function loadLogs() {
+    try {
+      const r = await fetch('/admin/logs?n=200');
+      const d = await r.json();
+      if (d.logs && d.logs.length !== knownLogCount) {
+        knownLogCount = d.logs.length;
+        renderLogs(d.logs);
+      }
+    } catch(e) { console.error('logs error', e); }
+  }
+
+  // ── Render ────────────────────────────────────────────────────
+  function renderStatus(d) {
+    const badge = document.getElementById('status-badge');
+    badge.className = d.status;
+    badge.textContent = d.status.toUpperCase();
+
+    document.getElementById('val-id').textContent    = d.instance_id ?? '—';
+    document.getElementById('val-model').textContent = d.config?.remote_model ?? '—';
+
+    const urlEl = document.getElementById('val-url');
+    if (d.ollama_url) {
+      urlEl.innerHTML = `<a href="${d.ollama_url}" target="_blank">${d.ollama_url}</a>`;
+    } else {
+      urlEl.textContent = '—';
+    }
+
+    document.getElementById('val-idle').textContent =
+      d.idle_minutes != null ? `${d.idle_minutes} min` : '—';
+    document.getElementById('val-stops').textContent =
+      d.stops_in_minutes != null ? `~${d.stops_in_minutes} min` : '—';
+
+    // Habilitar/deshabilitar botones según estado
+    document.getElementById('btn-launch').disabled  = ['running','starting','stopping'].includes(d.status);
+    document.getElementById('btn-stop').disabled    = !['running','starting'].includes(d.status);
+    document.getElementById('btn-destroy').disabled = d.status === 'stopped' && !d.instance_id;
+  }
+
+  function renderInstances(d) {
+    const wrap = document.getElementById('instances-wrap');
+    if (!d.ok) { wrap.innerHTML = `<p style="color:var(--red)">${d.message}</p>`; return; }
+    if (!d.instances || d.instances.length === 0) {
+      wrap.innerHTML = '<p style="color:var(--muted)">Sin instancias activas en Vast.ai</p>';
+      return;
+    }
+    const rows = d.instances.map(i => {
+      const s       = i.actual_status || '?';
+      const pillCls = s === 'running' ? 'pill-running' : s === 'loading' ? 'pill-loading' : 'pill-other';
+      const dph     = i.dph_total ? `$${parseFloat(i.dph_total).toFixed(3)}/h` : '—';
+      const gpu     = i.gpu_name || '?';
+      const ip      = i.public_ipaddr || '—';
+      const managed = i.id == (window._managedId || -1) ? ' ⬅ gestionada' : '';
+      return `<tr>
+        <td>${i.id}${managed}</td>
+        <td><span class="status-pill ${pillCls}">${s}</span></td>
+        <td>${gpu}</td>
+        <td>${ip}</td>
+        <td>${dph}</td>
+        <td><button class="btn-muted btn-sm" onclick="destroyInstance(${i.id})">Destruir</button></td>
+      </tr>`;
+    }).join('');
+    wrap.innerHTML = `<table>
+      <thead><tr><th>ID</th><th>Estado</th><th>GPU</th><th>IP</th><th>$/h</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
+
+  function renderLogs(logs) {
+    const el  = document.getElementById('log-output');
+    el.innerHTML = logs.map(l => {
+      const cls = `log-${l.level}`;
+      const line = l.line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      return `<span class="${cls}">${line}</span>`;
+    }).join('\n');
+    if (document.getElementById('autoscroll').checked) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }
+
+  // ── Acciones ──────────────────────────────────────────────────
+  async function doAction(action) {
+    const method = action === 'destroy' ? 'DELETE' : 'POST';
+    try {
+      const r = await fetch(`/admin/${action}`, { method });
+      const d = await r.json();
+      showToast(d.message || (d.ok ? 'OK' : 'Error'));
+      setTimeout(loadStatus, 1000);
+    } catch(e) {
+      showToast('Error de red');
+    }
+  }
+
+  function confirmDestroy() {
+    if (confirm('¿Seguro? Esto eliminará la instancia y todos sus datos permanentemente.')) {
+      doAction('destroy');
+    }
+  }
+
+  async function destroyInstance(id) {
+    if (!confirm(`¿Destruir instancia ${id}? Esta acción es irreversible.`)) return;
+    try {
+      const r = await fetch(`/admin/instances/${id}/destroy`, { method: 'POST' });
+      const d = await r.json();
+      showToast(d.message || (d.ok ? 'OK' : 'Error'));
+      setTimeout(loadInstances, 1000);
+      setTimeout(loadStatus, 1000);
+    } catch(e) {
+      showToast('Error de red');
+    }
+  }
+
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 3000);
+  }
+
+  // ── Contador de tiempo desde última actualización ─────────────
+  setInterval(() => {
+    const sec = Math.round((Date.now() - lastRefresh) / 1000);
+    document.getElementById('refresh-info').textContent =
+      `Actualizado hace ${sec}s`;
+  }, 1000);
+
+  // ── Auto-refresh ──────────────────────────────────────────────
+  async function refresh() {
+    await loadStatus();
+    await loadLogs();
+  }
+
+  setInterval(refresh, 10000);
+  setInterval(loadInstances, 30000);
+
+  // Carga inicial
+  refresh();
+  loadInstances();
+</script>
+</body>
+</html>
