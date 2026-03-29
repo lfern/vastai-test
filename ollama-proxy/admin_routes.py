@@ -13,8 +13,7 @@ Endpoints de administración y UI web.
 import asyncio
 import logging
 import time
-
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 
 import config
@@ -164,3 +163,39 @@ async def admin_destroy_any(instance_id: int):
 async def admin_logs(n: int = 150):
     """Devuelve las últimas N líneas de log del proxy."""
     return {"logs": log_buffer.get_recent(n)}
+
+
+# ---------------------------------------------------------------------------
+# Logs de instancia Vast.ai (proxy hacia la API de cloud.vast.ai)
+# ---------------------------------------------------------------------------
+
+
+def _fetch_logs_via_cli(instance_id: int, daemon: bool) -> str:
+    import re, subprocess
+    args = ["vastai", "logs", str(instance_id), "--tail", "500"]
+    if daemon:
+        args += ["--daemon-logs"]
+    r   = subprocess.run(args, capture_output=True, text=True, timeout=30)
+    raw = r.stdout or r.stderr or ""
+    ansi = re.compile(r'\x1b\[[0-9;?]*[A-Za-z]')
+    lines = [
+        ansi.sub("", line).strip()
+        for line in raw.splitlines()
+        if "waiting on logs" not in line.lower() and ansi.sub("", line).strip()
+    ]
+    return "\n".join(lines)
+
+
+@router.get("/admin/instance-logs")
+async def admin_instance_logs(
+    instance_id: int  = Query(...),
+    daemon:      bool = Query(False),
+):
+    """Obtiene logs de instancia via CLI (un tipo a la vez para evitar colisión S3)."""
+    try:
+        loop    = asyncio.get_event_loop()
+        content = await loop.run_in_executor(None, _fetch_logs_via_cli, instance_id, daemon)
+        return JSONResponse({"ok": True, "content": content})
+    except Exception as e:
+        log.error(f"[ADMIN] Error obteniendo logs de instancia {instance_id}: {e}")
+        return JSONResponse({"ok": False, "message": str(e)}, status_code=500)

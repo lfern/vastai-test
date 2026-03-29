@@ -18,14 +18,7 @@ services:
       - "11434:11434"
     volumes:
       - ./vastai-config:/root/.config/vastai   # API key de Vast.ai
-    environment:
-      - REMOTE_MODEL=glm-4.7-flash             # modelo a cargar en Vast.ai
-      - INACTIVITY_MINUTES=15                  # para la instancia tras N min sin uso
-      - SEARCH_QUERY=dph<0.15 reliability>0.999 gpu_name=RTX_3090 num_gpus=1 gpu_ram>=24 cpu_ram>=32 disk_space>=32
-      - INSTANCE_IMAGE=vastai/ollama:0.15.4
-      - INSTANCE_DISK_GB=32
-      - LAUNCH_MAX_RETRIES=5
-      - LAUNCH_TIMEOUT_MIN=12
+    env_file: ./ollama-proxy.env               # editar sin necesidad de rebuild
     restart: unless-stopped
 
   # Chat UI. Descomentar cuando esté listo para usar.

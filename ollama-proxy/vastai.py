@@ -88,8 +88,126 @@ def destroy_instance_sync(instance_id: int):
 # Lanzamiento completo (síncrono, bloqueante ~5-12 min)
 # ---------------------------------------------------------------------------
 
+# Patrones en los logs de la instancia que indican fallo irrecuperable
+_FATAL_LOG_PATTERNS = [
+    "oom",
+    "out of memory",
+    "killed",
+    "failed to create",
+    "cannot allocate",
+    "exec format error",
+]
+
+
+_ANSI_ESCAPE = __import__('re').compile(r'\x1b\[[0-9;?]*[A-Za-z]|\x1b\[\d*[A-Za-z]|\r')
+
+
+def _check_instance_logs(instance_id: int) -> tuple[bool, str]:
+    """
+    Comprueba los logs de la instancia buscando errores fatales.
+    vastai logs devuelve texto plano con:
+      - líneas "waiting on logs..." mientras S3 no tiene contenido
+      - códigos de escape ANSI (progress bars de ollama pull)
+    Filtra ambas cosas antes de escanear.
+    Devuelve (fatal_error_found, descripción).
+    """
+    rc, out, err = _cli("logs", str(instance_id), "--tail", "100")
+    if rc != 0 or not out:
+        return False, ""
+
+    # Strip ANSI escapes y filtrar líneas de espera
+    real_lines = []
+    for line in out.splitlines():
+        if "waiting on logs" in line.lower():
+            continue
+        clean = _ANSI_ESCAPE.sub("", line).strip()
+        if clean:
+            real_lines.append(clean)
+
+    if not real_lines:
+        return False, ""   # aún no hay logs reales
+
+    content = "\n".join(real_lines)
+    log.debug(f"[LOGS] Instancia {instance_id} — últimas líneas limpias: {content[-400:]!r}")
+
+    lower = content.lower()
+    for pattern in _FATAL_LOG_PATTERNS:
+        if pattern in lower:
+            for line in real_lines:
+                if pattern in line.lower():
+                    return True, line.strip()
+    return False, ""
+
+
+def _destroy_quietly(instance_id: int):
+    """Destruye una instancia sin lanzar excepciones (para cleanup en errores)."""
+    try:
+        destroy_instance_sync(instance_id)
+    except Exception as e:
+        log.warning(f"[LAUNCH] No se pudo destruir instancia {instance_id}: {e}")
+
+
+def _wait_for_instance(instance_id: int, offer_label: str) -> bool:
+    """
+    Espera a que una instancia esté lista y Ollama responda.
+    Comprueba logs buscando errores fatales para abortar antes del timeout.
+    Devuelve True si la instancia arrancó correctamente.
+    """
+    max_polls   = (config.LAUNCH_TIMEOUT * 60) // config.POLL_INTERVAL
+    ollama_hits = 0
+
+    for attempt in range(1, max_polls + 1):
+        time.sleep(config.POLL_INTERVAL)
+
+        # Estado de la instancia
+        try:
+            data   = get_instance_sync(instance_id)
+            status = data.get("actual_status", "unknown")
+            ip     = data.get("public_ipaddr", "")
+            log.info(f"[WAIT] {offer_label} poll {attempt}/{max_polls}: status={status} ip={ip or '-'}")
+        except Exception as e:
+            log.warning(f"[WAIT] {offer_label} poll {attempt}: no se pudo obtener estado: {e}")
+            continue
+
+        # Error de estado reportado por Vast.ai
+        if status in ("error", "exited", "failed"):
+            log.error(f"[WAIT] {offer_label} entró en estado de error: {status}")
+            return False
+
+        # Comprobar logs en cada poll buscando errores fatales del contenedor
+        fatal, msg = _check_instance_logs(instance_id)
+        if fatal:
+            log.error(f"[WAIT] {offer_label} error fatal en logs: {msg}")
+            return False
+
+        # Instancia running con IP → verificar Ollama
+        if status == "running" and ip:
+            url = f"http://{ip}:{config.OLLAMA_HOST_PORT}"
+            try:
+                r = httpx.get(f"{url}/api/tags", timeout=5)
+                if r.status_code == 200:
+                    ollama_hits += 1
+                    log.info(f"[WAIT] {offer_label} Ollama responde ({ollama_hits}/3) en {url}")
+                    if ollama_hits >= 3:
+                        state.ollama_url = url
+                        log.info(f"[WAIT] ✓ {offer_label} lista en {url}")
+                        return True
+                else:
+                    ollama_hits = 0
+            except Exception as e:
+                log.debug(f"[WAIT] {offer_label} Ollama aún no listo: {e}")
+                ollama_hits = 0
+
+    log.error(f"[WAIT] {offer_label} timeout tras {config.LAUNCH_TIMEOUT} min")
+    return False
+
+
 def _launch_sync() -> bool:
-    """Busca oferta → crea instancia → espera arranque → verifica Ollama."""
+    """
+    Busca ofertas y para cada una: crea instancia → espera → comprueba logs.
+    Si una instancia falla (error en logs, timeout o error de estado),
+    la destruye y prueba la siguiente oferta.
+    """
 
     # 1. Buscar ofertas
     log.info(f"[LAUNCH] Buscando ofertas: {config.SEARCH_QUERY}")
@@ -118,15 +236,15 @@ def _launch_sync() -> bool:
         f"-e JUPYTER_DIR=/ -e DATA_DIRECTORY=/workspace/"
     )
 
-    # 2. Intentar crear instancia con cada oferta hasta que una funcione
-    instance_id = None
+    # 2. Para cada oferta: crear instancia → esperar → si falla, destruir y probar la siguiente
     for i, offer in enumerate(offers):
-        offer_id  = str(offer["id"])
-        offer_dph = offer.get("dph_total", "?")
-        offer_gpu = offer.get("gpu_name", "?")
-        log.info(f"[LAUNCH] Intento {i+1}/{len(offers)}: "
-                 f"oferta {offer_id} ({offer_gpu}, ${offer_dph}/h)")
+        offer_id   = str(offer["id"])
+        offer_dph  = offer.get("dph_total", "?")
+        offer_gpu  = offer.get("gpu_name", "?")
+        offer_label = f"oferta {offer_id} ({offer_gpu}, ${offer_dph}/h)"
+        log.info(f"[LAUNCH] Intento {i+1}/{len(offers)}: {offer_label}")
 
+        # Crear instancia
         rc, out, err = _cli(
             "create", "instance", offer_id,
             "--image", config.INSTANCE_IMAGE,
@@ -135,61 +253,36 @@ def _launch_sync() -> bool:
             "--disk", str(config.INSTANCE_DISK),
             "--raw",
         )
-        if rc == 0 and out:
-            try:
-                data = _parse_json(out)
-                iid  = data.get("new_contract")
-                if iid:
-                    instance_id = int(iid)
-                    state.instance_id = instance_id
-                    log.info(f"[LAUNCH] ✓ Instancia {instance_id} creada con oferta {offer_id}")
-                    break
-                log.warning(f"[LAUNCH] Sin new_contract en respuesta: {data}")
-            except Exception as e:
-                log.warning(f"[LAUNCH] Error parseando create: {e} — {out[:200]}")
-        else:
-            log.warning(f"[LAUNCH] Oferta {offer_id} rechazada: {(err or out)[:200]}")
-
-    if instance_id is None:
-        log.error("[LAUNCH] Todos los intentos fallaron")
-        return False
-
-    # 3. Polling hasta que Ollama responda
-    max_polls   = (config.LAUNCH_TIMEOUT * 60) // config.POLL_INTERVAL
-    ollama_hits = 0
-    for attempt in range(1, max_polls + 1):
-        time.sleep(config.POLL_INTERVAL)
-        try:
-            data   = get_instance_sync(instance_id)
-            status = data.get("actual_status", "unknown")
-            ip     = data.get("public_ipaddr", "")
-            log.info(f"[WAIT] Poll {attempt}/{max_polls}: status={status} ip={ip}")
-        except Exception as e:
-            log.warning(f"[WAIT] Poll {attempt}: {e}")
+        if rc != 0 or not out:
+            log.warning(f"[LAUNCH] {offer_label} rechazada al crear: {(err or out)[:200]}")
             continue
 
-        if status in ("error", "exited", "failed"):
-            log.error(f"[WAIT] Instancia entró en error: {status}")
-            return False
+        try:
+            data        = _parse_json(out)
+            instance_id = data.get("new_contract")
+            if not instance_id:
+                log.warning(f"[LAUNCH] {offer_label} sin new_contract: {data}")
+                continue
+            instance_id = int(instance_id)
+        except Exception as e:
+            log.warning(f"[LAUNCH] {offer_label} error parseando create: {e} — {out[:200]}")
+            continue
 
-        if status == "running" and ip:
-            url = f"http://{ip}:{config.OLLAMA_HOST_PORT}"
-            try:
-                r = httpx.get(f"{url}/api/tags", timeout=5)
-                if r.status_code == 200:
-                    ollama_hits += 1
-                    log.info(f"[WAIT] Ollama responde ({ollama_hits}/3) en {url}")
-                    if ollama_hits >= 3:
-                        state.ollama_url = url
-                        log.info(f"[WAIT] ✓ Instancia {instance_id} lista en {url}")
-                        return True
-                else:
-                    ollama_hits = 0
-            except Exception as e:
-                log.debug(f"[WAIT] Ollama aún no listo: {e}")
-                ollama_hits = 0
+        state.instance_id = instance_id
+        log.info(f"[LAUNCH] ✓ Instancia {instance_id} creada. Esperando arranque...")
 
-    log.error(f"[WAIT] Timeout: instancia no arrancó en {config.LAUNCH_TIMEOUT} min")
+        # Esperar arranque con comprobación de logs
+        ok = _wait_for_instance(instance_id, offer_label)
+        if ok:
+            return True
+
+        # Falló → destruir y probar siguiente oferta
+        log.warning(f"[LAUNCH] {offer_label} falló. Destruyendo y probando siguiente...")
+        _destroy_quietly(instance_id)
+        state.instance_id = None
+        state.ollama_url  = None
+
+    log.error("[LAUNCH] Todas las ofertas fallaron")
     return False
 
 

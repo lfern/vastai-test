@@ -81,19 +81,35 @@
     .pill-other    { background: #1e1e2e;   color: var(--muted);  border: 1px solid var(--border); }
     .btn-sm { padding: 3px 8px; font-size: 11px; }
 
+    /* Tabs */
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+    .tab-btn { background: none; border: none; border-bottom: 2px solid transparent;
+               color: var(--muted); padding: 6px 16px; font-size: 13px; font-weight: 500;
+               cursor: pointer; border-radius: 0; margin-bottom: -1px; transition: color .15s; }
+    .tab-btn:hover { color: var(--text); opacity: 1; }
+    .tab-btn.active { color: var(--text); border-bottom-color: var(--blue); }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
     /* Log console */
-    #log-wrap { position: relative; }
-    #log-output { background: #080a10; border: 1px solid var(--border); border-radius: 6px;
-                  padding: 12px; height: 280px; overflow-y: auto; font-family: monospace;
-                  font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
+    .log-console { background: #080a10; border: 1px solid var(--border); border-radius: 6px;
+                   padding: 12px; height: 300px; overflow-y: auto; font-family: monospace;
+                   font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
     .log-INFO    { color: #94a3b8; }
     .log-WARNING { color: var(--orange); }
     .log-ERROR   { color: var(--red); }
     .log-DEBUG   { color: #4b5563; }
-    #log-controls { display: flex; justify-content: space-between; align-items: center;
-                    margin-bottom: 8px; }
+    .log-controls { display: flex; justify-content: space-between; align-items: center;
+                    margin-bottom: 8px; gap: 8px; flex-wrap: wrap; }
     #autoscroll-label { color: var(--muted); font-size: 12px; display: flex;
                         align-items: center; gap: 6px; cursor: pointer; }
+    .instance-log-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .instance-log-bar select { background: var(--border); color: var(--text);
+                                border: 1px solid var(--border); border-radius: 4px;
+                                padding: 4px 8px; font-size: 12px; }
+    .instance-log-bar label { color: var(--muted); font-size: 12px;
+                               display: flex; align-items: center; gap: 4px; cursor: pointer; }
+    #instance-log-status { color: var(--muted); font-size: 11px; }
 
     #toast { position: fixed; bottom: 24px; right: 24px; background: var(--surface);
              border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px;
@@ -119,7 +135,6 @@
       <dt>Ollama URL</dt>   <dd id="val-url">—</dd>
       <dt>Modelo</dt>       <dd id="val-model">—</dd>
       <dt>Inactividad</dt>  <dd id="val-idle">—</dd>
-      <dt>Se para en</dt>   <dd id="val-stops">—</dd>
     </dl>
   </section>
 
@@ -133,8 +148,8 @@
       <button class="btn-muted" onclick="loadStatus()">↺ Refrescar</button>
     </div>
     <p style="color:var(--muted);font-size:12px;line-height:1.6">
-      <b>Lanzar</b>: arranca manualmente (normalmente automático).<br>
-      <b>Parar</b>: detiene la instancia pero no la borra (sigue costando en Vast.ai).<br>
+      <b>Lanzar</b>: arranca una instancia GPU en Vast.ai.<br>
+      <b>Parar</b>: detiene la instancia (sigue costando almacenamiento).<br>
       <b>Destruir</b>: elimina la instancia definitivamente (irreversible).
     </p>
   </section>
@@ -147,20 +162,44 @@
     <div id="instances-wrap"><p style="color:var(--muted)">Cargando...</p></div>
   </section>
 
-  <!-- Logs -->
+  <!-- Logs (tabs) -->
   <section id="sec-logs" style="grid-column: 1 / -1">
-    <h2>Logs del proxy</h2>
-    <div id="log-controls">
-      <label id="autoscroll-label">
-        <input type="checkbox" id="autoscroll" checked> Auto-scroll
-      </label>
-      <button class="btn-muted btn-sm" onclick="document.getElementById('log-output').innerHTML=''">
-        Limpiar pantalla
-      </button>
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('proxy')">Proxy</button>
+      <button class="tab-btn"        onclick="switchTab('instance')">Instancia</button>
     </div>
-    <div id="log-wrap">
-      <pre id="log-output"></pre>
+
+    <!-- Tab: Proxy logs -->
+    <div id="tab-proxy" class="tab-panel active">
+      <div class="log-controls">
+        <label id="autoscroll-label">
+          <input type="checkbox" id="autoscroll" checked> Auto-scroll
+        </label>
+        <button class="btn-muted btn-sm" onclick="document.getElementById('log-proxy').innerHTML=''">
+          Limpiar
+        </button>
+      </div>
+      <pre id="log-proxy" class="log-console"></pre>
     </div>
+
+    <!-- Tab: Instance logs (container o daemon, uno a la vez) -->
+    <div id="tab-instance" class="tab-panel">
+      <div class="log-controls">
+        <div class="instance-log-bar">
+          <select id="instance-log-id" onchange="loadInstanceLogs()">
+            <option value="">— Instance ID —</option>
+          </select>
+          <select id="log-type" onchange="clearAndLoadInstanceLogs()">
+            <option value="false">Container logs</option>
+            <option value="true">Daemon logs</option>
+          </select>
+          <button class="btn-muted btn-sm" onclick="loadInstanceLogs()">↺</button>
+          <span id="instance-log-status"></span>
+        </div>
+      </div>
+      <pre id="log-instance" class="log-console" style="color:#94a3b8">Selecciona instancia y tipo, luego pulsa ↺ Cargar.</pre>
+    </div>
+
   </section>
 
 </main>
@@ -169,8 +208,21 @@
 
 <script>
   // ── Estado local ──────────────────────────────────────────────
-  let lastRefresh = 0;
-  let knownLogCount = 0;
+  let lastRefresh    = 0;
+  let knownLogCount  = 0;
+  let activeTab      = 'proxy';
+  let knownInstances = [];
+
+  // ── Tab switching ─────────────────────────────────────────────
+  function switchTab(name) {
+    activeTab = name;
+    document.querySelectorAll('.tab-btn').forEach((b, i) => {
+      b.classList.toggle('active', ['proxy','instance'][i] === name);
+    });
+    ['proxy','instance'].forEach(t => {
+      document.getElementById(`tab-${t}`).classList.toggle('active', t === name);
+    });
+  }
 
   // ── Polling ───────────────────────────────────────────────────
   async function loadStatus() {
@@ -186,7 +238,9 @@
     try {
       const r = await fetch('/admin/instances');
       const d = await r.json();
+      knownInstances = d.instances || [];
       renderInstances(d);
+      updateInstanceSelect();
     } catch(e) {
       document.getElementById('instances-wrap').innerHTML =
         `<p style="color:var(--red)">Error cargando instancias</p>`;
@@ -199,15 +253,60 @@
       const d = await r.json();
       if (d.logs && d.logs.length !== knownLogCount) {
         knownLogCount = d.logs.length;
-        renderLogs(d.logs);
+        renderProxyLogs(d.logs);
       }
     } catch(e) { console.error('logs error', e); }
+  }
+
+  function stripAnsi(s) {
+    return s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\r/g, '');
+  }
+
+  function clearAndLoadInstanceLogs() {
+    document.getElementById('log-instance').textContent = '';
+    document.getElementById('instance-log-status').textContent = '';
+    loadInstanceLogs();
+  }
+
+  async function loadInstanceLogs() {
+    const id     = document.getElementById('instance-log-id').value;
+    const daemon = document.getElementById('log-type').value;
+    const status = document.getElementById('instance-log-status');
+    const el     = document.getElementById('log-instance');
+    if (!id) { status.textContent = 'Selecciona una instancia'; return; }
+
+    status.textContent = 'Cargando…';
+    try {
+      const r = await fetch(`/admin/instance-logs?instance_id=${id}&daemon=${daemon}`);
+      const d = await r.json();
+      const ts = new Date().toLocaleTimeString();
+      if (d.ok) {
+        el.textContent   = d.content || '(sin contenido)';
+        el.scrollTop     = el.scrollHeight;
+        status.textContent = `✓ ${ts}`;
+      } else {
+        status.textContent = `⚠ Error ${ts}: ${d.message}`;
+      }
+    } catch(e) {
+      status.textContent = `⚠ Error de red ${new Date().toLocaleTimeString()}`;
+      console.error(e);
+    }
+  }
+
+  function updateInstanceSelect() {
+    const sel = document.getElementById('instance-log-id');
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">— Instance ID —</option>' +
+      knownInstances.map(i =>
+        `<option value="${i.id}">${i.id} — ${i.gpu_name || '?'} (${i.actual_status || '?'})</option>`
+      ).join('');
+    if (cur) sel.value = cur;
   }
 
   // ── Render ────────────────────────────────────────────────────
   function renderStatus(d) {
     const badge = document.getElementById('status-badge');
-    badge.className = d.status;
+    badge.className  = d.status;
     badge.textContent = d.status.toUpperCase();
 
     document.getElementById('val-id').textContent    = d.instance_id ?? '—';
@@ -222,10 +321,7 @@
 
     document.getElementById('val-idle').textContent =
       d.idle_minutes != null ? `${d.idle_minutes} min` : '—';
-    document.getElementById('val-stops').textContent =
-      d.stops_in_minutes != null ? `~${d.stops_in_minutes} min` : '—';
 
-    // Habilitar/deshabilitar botones según estado
     document.getElementById('btn-launch').disabled  = ['running','starting','stopping'].includes(d.status);
     document.getElementById('btn-stop').disabled    = !['running','starting'].includes(d.status);
     document.getElementById('btn-destroy').disabled = d.status === 'stopped' && !d.instance_id;
@@ -242,14 +338,11 @@
       const s       = i.actual_status || '?';
       const pillCls = s === 'running' ? 'pill-running' : s === 'loading' ? 'pill-loading' : 'pill-other';
       const dph     = i.dph_total ? `$${parseFloat(i.dph_total).toFixed(3)}/h` : '—';
-      const gpu     = i.gpu_name || '?';
-      const ip      = i.public_ipaddr || '—';
-      const managed = i.id == (window._managedId || -1) ? ' ⬅ gestionada' : '';
       return `<tr>
-        <td>${i.id}${managed}</td>
+        <td>${i.id}</td>
         <td><span class="status-pill ${pillCls}">${s}</span></td>
-        <td>${gpu}</td>
-        <td>${ip}</td>
+        <td>${i.gpu_name || '?'}</td>
+        <td>${i.public_ipaddr || '—'}</td>
         <td>${dph}</td>
         <td><button class="btn-muted btn-sm" onclick="destroyInstance(${i.id})">Destruir</button></td>
       </tr>`;
@@ -260,10 +353,10 @@
     </table>`;
   }
 
-  function renderLogs(logs) {
-    const el  = document.getElementById('log-output');
+  function renderProxyLogs(logs) {
+    const el = document.getElementById('log-proxy');
     el.innerHTML = logs.map(l => {
-      const cls = `log-${l.level}`;
+      const cls  = `log-${l.level}`;
       const line = l.line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       return `<span class="${cls}">${line}</span>`;
     }).join('\n');
@@ -274,9 +367,8 @@
 
   // ── Acciones ──────────────────────────────────────────────────
   async function doAction(action) {
-    const method = action === 'destroy' ? 'DELETE' : 'POST';
     try {
-      const r = await fetch(`/admin/${action}`, { method });
+      const r = await fetch(`/admin/${action}`, { method: 'POST' });
       const d = await r.json();
       showToast(d.message || (d.ok ? 'OK' : 'Error'));
       setTimeout(loadStatus, 1000);
@@ -311,11 +403,10 @@
     setTimeout(() => t.classList.remove('show'), 3000);
   }
 
-  // ── Contador de tiempo desde última actualización ─────────────
+  // ── Contador de tiempo ────────────────────────────────────────
   setInterval(() => {
     const sec = Math.round((Date.now() - lastRefresh) / 1000);
-    document.getElementById('refresh-info').textContent =
-      `Actualizado hace ${sec}s`;
+    document.getElementById('refresh-info').textContent = `Actualizado hace ${sec}s`;
   }, 1000);
 
   // ── Auto-refresh ──────────────────────────────────────────────
@@ -326,8 +417,12 @@
 
   setInterval(refresh, 10000);
   setInterval(loadInstances, 30000);
+  setInterval(() => {
+    if (activeTab === 'instance' && document.getElementById('instance-log-id').value) {
+      loadInstanceLogs();
+    }
+  }, 30000);
 
-  // Carga inicial
   refresh();
   loadInstances();
 </script>

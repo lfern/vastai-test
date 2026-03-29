@@ -11,18 +11,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 import config
 from state import state
-from vastai import ensure_running
 
 log = logging.getLogger("ollama")
 router = APIRouter()
-
-STATUS_MESSAGES = [
-    "⏳ Arrancando instancia GPU en Vast.ai...\n",
-    "🔍 Buscando mejor oferta disponible (RTX 3090)...\n",
-    "⚙️  Creando instancia, puede tardar unos minutos...\n",
-    "🐳 Cargando imagen Docker y modelo de lenguaje...\n",
-    "🔄 Esperando que Ollama esté listo en la instancia...\n",
-]
 
 
 def _now() -> str:
@@ -52,35 +43,15 @@ async def _stream(body: dict, endpoint: str) -> AsyncGenerator[bytes, None]:
 
     log.info(f"[{req_id}] Petición — modelo={model} vastai={state.status}")
 
-    # Asegurar instancia activa, enviando mensajes de estado mientras arranca
+    # Si la instancia no está corriendo, rechazar con mensaje claro
     if state.status != "running":
-        log.info(f"[{req_id}] Instancia no activa ({state.status}), lanzando...")
-        msg_idx     = 0
-        launch_task = __import__("asyncio").create_task(ensure_running())
-
-        while not launch_task.done():
-            msg = STATUS_MESSAGES[msg_idx] if msg_idx < len(STATUS_MESSAGES) else "."
-            log.info(f"[{req_id}] → keepalive: {msg.strip()}")
-            yield chunk_fn(msg, model)
-            msg_idx += 1
-            try:
-                import asyncio
-                await asyncio.wait_for(asyncio.shield(launch_task), timeout=config.STATUS_INTERVAL)
-            except asyncio.TimeoutError:
-                pass
-
-        success, _ = await launch_task
-        if not success:
-            log.error(f"[{req_id}] Lanzamiento fallido")
-            yield chunk_fn(
-                "\n\n❌ No se pudo lanzar la instancia Vast.ai.\n"
-                "Comprueba la API key (`vastai-scripts/set-api-key.sh`) "
-                "y que haya ofertas disponibles.",
-                model, done=True,
-            )
-            return
-        log.info(f"[{req_id}] Instancia lista en {state.ollama_url}")
-        yield chunk_fn("\n🟢 **GPU lista. Procesando tu petición...**\n\n", model)
+        log.warning(f"[{req_id}] Instancia no activa ({state.status}) — lanzamiento manual requerido")
+        yield chunk_fn(
+            f"⚠️ La instancia GPU no está activa (estado: {state.status}).\n"
+            "Lánzala desde el panel de administración: http://localhost:11434/",
+            model, done=True,
+        )
+        return
 
     # Proxy de la petición real a Vast.ai
     state.last_used = time.time()
