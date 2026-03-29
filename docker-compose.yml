@@ -16,26 +16,22 @@ services:
     container_name: ollama-proxy
     ports:
       - "11434:11434"
-    volumes:
-      - ./vastai-config:/root/.config/vastai   # API key de Vast.ai
-    env_file: ./ollama-proxy.env               # editar sin necesidad de rebuild
+    env_file: .env
     restart: unless-stopped
 
-  # Chat UI. Descomentar cuando esté listo para usar.
-  # clawd:
-  #   image: clawdbot/core:latest
-  #   container_name: clawd
-  #   ports:
-  #     - "18789:18789"
-  #   volumes:
-  #     - ./config:/app/config
-  #     - ./workspace:/app/workspace
-  #   environment:
-  #     - OLLAMA_API_KEY=ollama-local
-  #     - OLLAMA_BASE_URL=http://ollama-proxy:11434
-  #   depends_on:
-  #     - ollama-proxy
-  #   restart: unless-stopped
+  clawd:
+    image: ghcr.io/openclaw/openclaw:latest
+    container_name: clawd
+    ports:
+      - "18789:18789"
+    volumes:
+      - ./config:/home/node/.openclaw
+      - ./workspace:/home/node/.openclaw/workspace
+    environment:
+      - OLLAMA_API_KEY=ollama-local
+    depends_on:
+      - ollama-proxy
+    restart: unless-stopped
 
   # CLI de Vast.ai para uso manual desde la máquina host (scripts en vastai-scripts/).
   # No arranca por defecto. Uso: docker compose --profile vast run --rm vastai <cmd>

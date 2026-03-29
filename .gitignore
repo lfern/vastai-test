@@ -1,1 +1,17 @@
+## Credenciales y configuración local
+.env
 vastai-config/
+
+## OpenClaw — estado runtime generado automáticamente
+config/agents/
+config/canvas/
+config/devices/
+config/identity/
+config/logs/
+config/update-check.json
+config/openclaw.json.bak
+config/openclaw.json
+config/workspace/
+
+## Workspace del agente (tiene su propio git)
+workspace/

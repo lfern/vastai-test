@@ -5,5 +5,7 @@ RUN pip install --no-cache-dir fastapi uvicorn[standard] httpx vastai
 WORKDIR /app
 COPY *.py ./
 COPY static/ ./static/
+COPY entrypoint.sh ./
+RUN chmod +x entrypoint.sh
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "11434"]
+ENTRYPOINT ["./entrypoint.sh"]

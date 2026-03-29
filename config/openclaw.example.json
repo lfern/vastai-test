@@ -1,0 +1,31 @@
+{
+  "models": {
+    "providers": {
+      "ollama": {
+        "baseUrl": "http://ollama-proxy:11434",
+        "apiKey": "ollama-local",
+        "api": "ollama",
+        "models": [
+          { "id": "glm-4.7-flash", "name": "GLM-4.7 Flash", "api": "ollama" }
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": "ollama/glm-4.7-flash"
+    }
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto",
+    "restart": true,
+    "ownerDisplay": "raw"
+  },
+  "gateway": {
+    "bind": "lan",
+    "auth": {
+      "mode": "token"
+    }
+  }
+}
