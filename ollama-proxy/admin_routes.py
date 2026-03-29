@@ -59,14 +59,21 @@ async def health():
 
 @router.get("/admin/status")
 async def admin_status():
-    idle         = (time.time() - state.last_used) / 60 if state.last_used else None
+    now          = time.time()
+    idle         = (now - state.last_used) / 60 if state.last_used else None
     stops_in_min = round(config.INACTIVITY_MIN - idle, 1) if idle is not None else None
+    active = [
+        {"req_id": k, "model": v["model"], "endpoint": v["endpoint"],
+         "elapsed_sec": round(now - v["started_at"], 1)}
+        for k, v in state.active_requests.items()
+    ]
     return {
-        "status":          state.status,
-        "instance_id":     state.instance_id,
-        "ollama_url":      state.ollama_url,
-        "idle_minutes":    round(idle, 1) if idle is not None else None,
+        "status":           state.status,
+        "instance_id":      state.instance_id,
+        "ollama_url":       state.ollama_url,
+        "idle_minutes":     round(idle, 1) if idle is not None else None,
         "stops_in_minutes": max(stops_in_min, 0) if stops_in_min is not None else None,
+        "active_requests":  active,
         "config": {
             "remote_model":      config.REMOTE_MODEL,
             "inactivity_min":    config.INACTIVITY_MIN,

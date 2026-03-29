@@ -68,6 +68,7 @@
     .btn-orange { background: var(--orange); color: #000; }
     .btn-red    { background: var(--red);    color: #fff; }
     .btn-muted  { background: var(--border); color: var(--text); }
+    .btn-blue   { background: var(--blue);   color: #fff; }
 
     /* Instances table */
     table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -111,6 +112,20 @@
                                display: flex; align-items: center; gap: 4px; cursor: pointer; }
     #instance-log-status { color: var(--muted); font-size: 11px; }
 
+    /* Active requests */
+    #active-requests { margin-top: 14px; }
+    .req-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px;
+               background: #0f1117; border-radius: 6px; margin-bottom: 6px;
+               border: 1px solid var(--border); font-size: 12px; }
+    .req-spinner { width: 10px; height: 10px; border-radius: 50%;
+                   border: 2px solid var(--blue); border-top-color: transparent;
+                   animation: spin .7s linear infinite; flex-shrink: 0; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .req-id    { color: var(--muted); font-family: monospace; }
+    .req-model { color: var(--text); flex: 1; }
+    .req-time  { color: var(--orange); font-family: monospace; font-weight: 600; min-width: 48px; text-align: right; }
+    #no-active { color: var(--muted); font-size: 12px; }
+
     #toast { position: fixed; bottom: 24px; right: 24px; background: var(--surface);
              border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px;
              font-size: 13px; opacity: 0; transition: opacity .3s; pointer-events: none; }
@@ -134,8 +149,9 @@
       <dt>Instance ID</dt>  <dd id="val-id">—</dd>
       <dt>Ollama URL</dt>   <dd id="val-url">—</dd>
       <dt>Modelo</dt>       <dd id="val-model">—</dd>
-      <dt>Inactividad</dt>  <dd id="val-idle">—</dd>
+        <dt>Inactividad</dt>  <dd id="val-idle">—</dd>
     </dl>
+    <div id="active-requests"></div>
   </section>
 
   <!-- Control manual -->
@@ -160,6 +176,19 @@
       <button class="btn-muted btn-sm" onclick="loadInstances()" style="float:right">↺</button>
     </h2>
     <div id="instances-wrap"><p style="color:var(--muted)">Cargando...</p></div>
+  </section>
+
+  <!-- Test rápido -->
+  <section id="sec-test" style="grid-column: 1 / -1">
+    <h2>Test de conexión</h2>
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <input id="test-input" type="text" placeholder="Escribe un mensaje y pulsa Enviar…"
+             style="flex:1;background:#080a10;border:1px solid var(--border);border-radius:6px;
+                    padding:8px 12px;color:var(--text);font-size:13px"
+             onkeydown="if(event.key==='Enter')sendTest()">
+      <button class="btn-blue" id="btn-test" onclick="sendTest()">Enviar</button>
+    </div>
+    <pre id="test-output" class="log-console" style="height:140px;color:#94a3b8"></pre>
   </section>
 
   <!-- Logs (tabs) -->
@@ -212,6 +241,7 @@
   let knownLogCount  = 0;
   let activeTab      = 'proxy';
   let knownInstances = [];
+  let activeReqs     = {};   // req_id → {model, endpoint, started_at (ms local)}
 
   // ── Tab switching ─────────────────────────────────────────────
   function switchTab(name) {
@@ -322,6 +352,21 @@
     document.getElementById('val-idle').textContent =
       d.idle_minutes != null ? `${d.idle_minutes} min` : '—';
 
+    // Peticiones activas
+    const now = Date.now();
+    const incoming = {};
+    (d.active_requests || []).forEach(r => {
+      if (!activeReqs[r.req_id]) {
+        // Primera vez que vemos esta petición: guardar timestamp local
+        activeReqs[r.req_id] = { model: r.model, endpoint: r.endpoint,
+                                  started_at: now - r.elapsed_sec * 1000 };
+      }
+      incoming[r.req_id] = true;
+    });
+    // Eliminar las que ya terminaron
+    Object.keys(activeReqs).forEach(id => { if (!incoming[id]) delete activeReqs[id]; });
+    renderActiveRequests();
+
     document.getElementById('btn-launch').disabled  = ['running','starting','stopping'].includes(d.status);
     document.getElementById('btn-stop').disabled    = !['running','starting'].includes(d.status);
     document.getElementById('btn-destroy').disabled = d.status === 'stopped' && !d.instance_id;
@@ -396,6 +441,56 @@
     }
   }
 
+  // ── Test rápido ───────────────────────────────────────────────
+  async function sendTest() {
+    const input  = document.getElementById('test-input');
+    const output = document.getElementById('test-output');
+    const btn    = document.getElementById('btn-test');
+    const msg    = input.value.trim();
+    if (!msg) return;
+
+    btn.disabled = true;
+    output.textContent = '⏳ Enviando…';
+    const t0 = Date.now();
+
+    try {
+      const resp = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'glm-4.7-flash',
+                               messages: [{ role: 'user', content: msg }],
+                               stream: true }),
+      });
+
+      output.textContent = '';
+      const reader = resp.body.getReader();
+      const dec    = new TextDecoder();
+      let full     = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        for (const line of dec.decode(value).split('\n')) {
+          if (!line.trim()) continue;
+          try {
+            const chunk = JSON.parse(line);
+            const token = chunk?.message?.content ?? chunk?.response ?? '';
+            full += token;
+            const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+            output.textContent = full + `\n\n— ${elapsed}s`;
+            output.scrollTop = output.scrollHeight;
+          } catch {}
+        }
+      }
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+      output.textContent = full + `\n\n— ${elapsed}s`;
+    } catch (e) {
+      output.textContent = `❌ Error: ${e.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   function showToast(msg) {
     const t = document.getElementById('toast');
     t.textContent = msg;
@@ -403,10 +498,37 @@
     setTimeout(() => t.classList.remove('show'), 3000);
   }
 
+  function renderActiveRequests() {
+    const wrap = document.getElementById('active-requests');
+    const ids  = Object.keys(activeReqs);
+    if (ids.length === 0) { wrap.innerHTML = ''; return; }
+    wrap.innerHTML = `<h2 style="font-size:13px;font-weight:600;color:var(--muted);
+      text-transform:uppercase;letter-spacing:.06em;margin:14px 0 8px">
+      Peticiones activas (${ids.length})</h2>` +
+      ids.map(id => {
+        const r = activeReqs[id];
+        const sec = Math.round((Date.now() - r.started_at) / 1000);
+        const t = sec >= 60 ? `${Math.floor(sec/60)}m ${sec%60}s` : `${sec}s`;
+        return `<div class="req-row">
+          <div class="req-spinner"></div>
+          <span class="req-id">${id}</span>
+          <span class="req-model">${r.model} <span style="color:var(--muted)">(${r.endpoint})</span></span>
+          <span class="req-time" id="rt-${id}">${t}</span>
+        </div>`;
+      }).join('');
+  }
+
   // ── Contador de tiempo ────────────────────────────────────────
   setInterval(() => {
     const sec = Math.round((Date.now() - lastRefresh) / 1000);
     document.getElementById('refresh-info').textContent = `Actualizado hace ${sec}s`;
+    // Actualizar timers de peticiones activas cada segundo
+    Object.keys(activeReqs).forEach(id => {
+      const el = document.getElementById(`rt-${id}`);
+      if (!el) return;
+      const s = Math.round((Date.now() - activeReqs[id].started_at) / 1000);
+      el.textContent = s >= 60 ? `${Math.floor(s/60)}m ${s%60}s` : `${s}s`;
+    });
   }, 1000);
 
   // ── Auto-refresh ──────────────────────────────────────────────

@@ -42,6 +42,7 @@ async def _stream(body: dict, endpoint: str) -> AsyncGenerator[bytes, None]:
     req_id   = f"{endpoint[:3].upper()}-{int(time.time())}"
 
     log.info(f"[{req_id}] Petición — modelo={model} vastai={state.status}")
+    state.active_requests[req_id] = {"model": model, "started_at": time.time(), "endpoint": endpoint}
 
     # Si la instancia no está corriendo, rechazar con mensaje claro
     if state.status != "running":
@@ -82,6 +83,8 @@ async def _stream(body: dict, endpoint: str) -> AsyncGenerator[bytes, None]:
     except Exception as e:
         log.error(f"[{req_id}] Error: {type(e).__name__}: {e}")
         yield chunk_fn(f"\n\n❌ Error comunicando con la instancia: {e}", model, done=True)
+    finally:
+        state.active_requests.pop(req_id, None)
 
 
 @router.post("/api/chat")
