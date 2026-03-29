@@ -180,9 +180,16 @@ def _wait_for_instance(instance_id: int, offer_label: str) -> bool:
             log.error(f"[WAIT] {offer_label} error fatal en logs: {msg}")
             return False
 
-        # Instancia running con IP → verificar Ollama
+        # Instancia running con IP → obtener puerto externo real y verificar Ollama
         if status == "running" and ip:
-            url = f"http://{ip}:{config.OLLAMA_HOST_PORT}"
+            # Vast.ai asigna puertos externos dinámicamente.
+            # Usamos el mapeo del puerto interno de Ollama (OLLAMA_CONTAINER_PORT=11434),
+            # evitando el portal proxy de Vast.ai que requiere autenticación.
+            ports    = data.get("ports", {}) or {}
+            port_key = f"{config.OLLAMA_CONTAINER_PORT}/tcp"
+            mappings = ports.get(port_key, [])
+            ext_port = mappings[0]["HostPort"] if mappings else config.OLLAMA_CONTAINER_PORT
+            url = f"http://{ip}:{ext_port}"
             try:
                 r = httpx.get(f"{url}/api/tags", timeout=5)
                 if r.status_code == 200:

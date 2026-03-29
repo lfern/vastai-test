@@ -60,7 +60,7 @@ async def _stream(body: dict, endpoint: str) -> AsyncGenerator[bytes, None]:
     log.info(f"[{req_id}] Proxying → {state.ollama_url}/api/{endpoint}")
 
     try:
-        async with httpx.AsyncClient(timeout=3600) as client:
+        async with httpx.AsyncClient(timeout=3600, follow_redirects=True, verify=False) as client:
             async with client.stream(
                 "POST",
                 f"{state.ollama_url}/api/{endpoint}",

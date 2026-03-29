@@ -159,6 +159,16 @@ async def admin_destroy_any(instance_id: int):
 # Logs
 # ---------------------------------------------------------------------------
 
+@router.post("/admin/attach")
+async def admin_attach(instance_id: int = Query(...), ollama_url: str = Query(...)):
+    """Registra una instancia ya en marcha en el estado del proxy (sin relanzar)."""
+    state.instance_id = instance_id
+    state.ollama_url  = ollama_url
+    state.status      = "running"
+    log.info(f"[ADMIN] Instancia {instance_id} registrada manualmente en {ollama_url}")
+    return {"ok": True, "message": f"Instancia {instance_id} registrada en {ollama_url}"}
+
+
 @router.get("/admin/logs")
 async def admin_logs(n: int = 150):
     """Devuelve las últimas N líneas de log del proxy."""
