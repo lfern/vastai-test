@@ -28,9 +28,9 @@
     header h1 { font-size: 18px; font-weight: 600; }
     #refresh-info { color: var(--muted); font-size: 12px; }
 
-    main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
-           padding: 20px 24px; max-width: 1200px; }
-    main > section:last-child { grid-column: 1 / -1; }
+    main { display: grid; grid-template-columns: 1fr 1fr 340px; gap: 16px;
+           padding: 20px 24px; max-width: 1400px; }
+    .full-row { grid-column: 1 / -1; }
 
     section { background: var(--surface); border: 1px solid var(--border);
               border-radius: var(--radius); padding: 18px; }
@@ -125,6 +125,25 @@
     .req-model { color: var(--text); flex: 1; }
     .req-time  { color: var(--orange); font-family: monospace; font-weight: 600; min-width: 48px; text-align: right; }
     #no-active { color: var(--muted); font-size: 12px; }
+    .req-row-clickable { cursor: pointer; }
+    .req-row-clickable:hover { border-color: var(--blue); background: #0d1220; }
+
+    /* Prompt modal */
+    #prompt-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7);
+                    z-index: 100; align-items: center; justify-content: center; padding: 24px; }
+    #prompt-modal.open { display: flex; }
+    #prompt-modal-box { background: var(--surface); border: 1px solid var(--border);
+                        border-radius: var(--radius); width: 100%; max-width: 780px;
+                        max-height: 80vh; display: flex; flex-direction: column; }
+    #prompt-modal-header { padding: 14px 18px; border-bottom: 1px solid var(--border);
+                           display: flex; align-items: center; justify-content: space-between; }
+    #prompt-modal-header span { font-size: 13px; font-weight: 600; color: var(--muted); }
+    #prompt-modal-close { background: none; border: none; color: var(--muted); font-size: 18px;
+                          cursor: pointer; padding: 0 4px; line-height: 1; }
+    #prompt-modal-close:hover { color: var(--text); opacity: 1; }
+    #prompt-modal-body { padding: 16px 18px; overflow-y: auto; flex: 1;
+                         font-family: monospace; font-size: 12px; line-height: 1.6;
+                         white-space: pre-wrap; word-break: break-word; color: var(--text); }
 
     #toast { position: fixed; bottom: 24px; right: 24px; background: var(--surface);
              border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px;
@@ -146,53 +165,66 @@
     <h2>Estado</h2>
     <div id="status-badge" class="stopped">STOPPED</div>
     <dl class="info-grid">
-      <dt>Instance ID</dt>  <dd id="val-id">—</dd>
-      <dt>Ollama URL</dt>   <dd id="val-url">—</dd>
-      <dt>Modelo</dt>       <dd id="val-model">—</dd>
-        <dt>Inactividad</dt>  <dd id="val-idle">—</dd>
+      <dt>Instance ID</dt> <dd id="val-id">—</dd>
+      <dt>Ollama URL</dt>  <dd id="val-url">—</dd>
+      <dt>Modelo</dt>      <dd id="val-model">—</dd>
+      <dt>Inactividad</dt> <dd id="val-idle">—</dd>
     </dl>
     <div id="active-requests"></div>
   </section>
 
-  <!-- Control manual -->
-  <section id="sec-controls">
-    <h2>Control manual</h2>
-    <div class="btn-row" style="margin-bottom:12px">
-      <button id="btn-launch"  class="btn-green"  onclick="doAction('launch')">▶ Lanzar</button>
-      <button id="btn-stop"    class="btn-orange" onclick="doAction('stop')">⏸ Parar</button>
-      <button id="btn-destroy" class="btn-red"    onclick="confirmDestroy()">🗑 Destruir</button>
-      <button class="btn-muted" onclick="loadStatus()">↺ Refrescar</button>
+  <!-- Billing -->
+  <section id="sec-billing">
+    <h2>Cuenta Vast.ai
+      <button class="btn-muted btn-sm" onclick="loadBilling()" style="float:right">↺</button>
+    </h2>
+    <dl class="info-grid" id="billing-grid">
+      <dt>Crédito</dt>      <dd id="val-credit">—</dd>
+      <dt>Gasto total</dt>  <dd id="val-spend">—</dd>
+      <dt>Balance</dt>      <dd id="val-balance">—</dd>
+    </dl>
+  </section>
+
+  <!-- Control manual + Test (columna derecha estrecha) -->
+  <section id="sec-controls" style="grid-row: span 2; display:flex; flex-direction:column; gap:16px;">
+    <div>
+      <h2>Control</h2>
+      <div class="btn-row" style="margin-bottom:10px; flex-direction:column; align-items:stretch;">
+        <button id="btn-launch"  class="btn-green"  onclick="doAction('launch')">▶ Lanzar instancia</button>
+        <button id="btn-stop"    class="btn-orange" onclick="doAction('stop')">⏸ Parar</button>
+        <button id="btn-rollama" class="btn-muted"  onclick="confirmRestartOllama()">↺ Reiniciar Ollama</button>
+        <button id="btn-destroy" class="btn-red"    onclick="confirmDestroy()">🗑 Destruir</button>
+        <button class="btn-muted" onclick="loadStatus()">↺ Refrescar</button>
+      </div>
+      <p style="color:var(--muted);font-size:11px;line-height:1.6">
+        <b>Parar</b>: detiene pero conserva la instancia.<br>
+        <b>Reiniciar Ollama</b>: cancela cola sin perder modelo.<br>
+        <b>Destruir</b>: elimina definitivamente (irreversible).
+      </p>
     </div>
-    <p style="color:var(--muted);font-size:12px;line-height:1.6">
-      <b>Lanzar</b>: arranca una instancia GPU en Vast.ai.<br>
-      <b>Parar</b>: detiene la instancia (sigue costando almacenamiento).<br>
-      <b>Destruir</b>: elimina la instancia definitivamente (irreversible).
-    </p>
+    <div>
+      <h2>Test rápido</h2>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <input id="test-input" type="text" placeholder="Escribe algo…"
+               style="flex:1;background:#080a10;border:1px solid var(--border);border-radius:6px;
+                      padding:7px 10px;color:var(--text);font-size:12px"
+               onkeydown="if(event.key==='Enter')sendTest()">
+        <button class="btn-blue btn-sm" id="btn-test" onclick="sendTest()">↵</button>
+      </div>
+      <pre id="test-output" class="log-console" style="height:200px;color:#94a3b8;flex:1"></pre>
+    </div>
   </section>
 
   <!-- Instancias en Vast.ai -->
-  <section id="sec-instances">
+  <section id="sec-instances" style="grid-column: span 2;">
     <h2>Instancias en Vast.ai
       <button class="btn-muted btn-sm" onclick="loadInstances()" style="float:right">↺</button>
     </h2>
     <div id="instances-wrap"><p style="color:var(--muted)">Cargando...</p></div>
   </section>
 
-  <!-- Test rápido -->
-  <section id="sec-test" style="grid-column: 1 / -1">
-    <h2>Test de conexión</h2>
-    <div style="display:flex;gap:8px;margin-bottom:10px">
-      <input id="test-input" type="text" placeholder="Escribe un mensaje y pulsa Enviar…"
-             style="flex:1;background:#080a10;border:1px solid var(--border);border-radius:6px;
-                    padding:8px 12px;color:var(--text);font-size:13px"
-             onkeydown="if(event.key==='Enter')sendTest()">
-      <button class="btn-blue" id="btn-test" onclick="sendTest()">Enviar</button>
-    </div>
-    <pre id="test-output" class="log-console" style="height:140px;color:#94a3b8"></pre>
-  </section>
-
   <!-- Logs (tabs) -->
-  <section id="sec-logs" style="grid-column: 1 / -1">
+  <section id="sec-logs" class="full-row">
     <div class="tabs">
       <button class="tab-btn active" onclick="switchTab('proxy')">Proxy</button>
       <button class="tab-btn"        onclick="switchTab('instance')">Instancia</button>
@@ -233,6 +265,17 @@
 
 </main>
 
+<!-- Prompt modal -->
+<div id="prompt-modal" onclick="if(event.target===this)closePrompt()">
+  <div id="prompt-modal-box">
+    <div id="prompt-modal-header">
+      <span id="prompt-modal-title">Mensaje enviado</span>
+      <button id="prompt-modal-close" onclick="closePrompt()">✕</button>
+    </div>
+    <pre id="prompt-modal-body"></pre>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -262,6 +305,22 @@
       renderStatus(d);
     } catch(e) { console.error('status error', e); }
     lastRefresh = Date.now();
+  }
+
+  async function loadBilling() {
+    try {
+      const r = await fetch('/admin/billing');
+      const d = await r.json();
+      if (d.ok) {
+        document.getElementById('val-credit').textContent  = `$${d.credit.toFixed(4)}`;
+        document.getElementById('val-spend').textContent   = `$${d.total_spend.toFixed(4)}`;
+        document.getElementById('val-balance').textContent = `$${d.balance.toFixed(4)}`;
+        const creditEl = document.getElementById('val-credit');
+        creditEl.style.color = d.credit < 1 ? 'var(--red)' : d.credit < 3 ? 'var(--orange)' : 'var(--green)';
+      } else {
+        document.getElementById('val-credit').textContent = d.message || 'Error';
+      }
+    } catch(e) { console.error('billing error', e); }
   }
 
   async function loadInstances() {
@@ -357,9 +416,13 @@
     const incoming = {};
     (d.active_requests || []).forEach(r => {
       if (!activeReqs[r.req_id]) {
-        // Primera vez que vemos esta petición: guardar timestamp local
         activeReqs[r.req_id] = { model: r.model, endpoint: r.endpoint,
-                                  started_at: now - r.elapsed_sec * 1000 };
+                                  started_at: now - r.elapsed_sec * 1000,
+                                  preview: r.preview || '',
+                                  full_prompt: r.full_prompt || '',
+                                  response_so_far: r.response_so_far || '' };
+      } else {
+        activeReqs[r.req_id].response_so_far = r.response_so_far || '';
       }
       incoming[r.req_id] = true;
     });
@@ -428,6 +491,12 @@
     }
   }
 
+  function confirmRestartOllama() {
+    if (confirm('Reiniciar Ollama cancela las peticiones en curso. El modelo NO se descarga de nuevo. ¿Continuar?')) {
+      doAction('restart-ollama');
+    }
+  }
+
   async function destroyInstance(id) {
     if (!confirm(`¿Destruir instancia ${id}? Esta acción es irreversible.`)) return;
     try {
@@ -491,6 +560,36 @@
     }
   }
 
+  let openModalId = null;
+
+  function showPrompt(id) {
+    const r = activeReqs[id];
+    if (!r) return;
+    openModalId = id;
+    _renderModal(id);
+    document.getElementById('prompt-modal').classList.add('open');
+  }
+
+  function _renderModal(id) {
+    const r = activeReqs[id];
+    if (!r) return;
+    document.getElementById('prompt-modal-title').textContent =
+      `${id} — ${r.model} (${r.endpoint})`;
+    const body = document.getElementById('prompt-modal-body');
+    const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+    body.textContent =
+      '── PROMPT ──────────────────────────────\n' + (r.full_prompt || '(vacío)') +
+      (r.response_so_far ? '\n\n── RESPUESTA ───────────────────────────\n' + r.response_so_far : '\n\n── RESPUESTA ───────────────────────────\n⏳ esperando tokens…');
+    if (atBottom) body.scrollTop = body.scrollHeight;
+  }
+
+  function closePrompt() {
+    openModalId = null;
+    document.getElementById('prompt-modal').classList.remove('open');
+  }
+
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closePrompt(); });
+
   function showToast(msg) {
     const t = document.getElementById('toast');
     t.textContent = msg;
@@ -509,11 +608,13 @@
         const r = activeReqs[id];
         const sec = Math.round((Date.now() - r.started_at) / 1000);
         const t = sec >= 60 ? `${Math.floor(sec/60)}m ${sec%60}s` : `${sec}s`;
-        return `<div class="req-row">
+        const hasPrompt = !!r.full_prompt;
+        return `<div class="req-row req-row-clickable" onclick="showPrompt('${id}')">
           <div class="req-spinner"></div>
           <span class="req-id">${id}</span>
           <span class="req-model">${r.model} <span style="color:var(--muted)">(${r.endpoint})</span></span>
           <span class="req-time" id="rt-${id}">${t}</span>
+          <button class="btn-blue btn-sm" style="flex-shrink:0" onclick="event.stopPropagation();showPrompt('${id}')">ver</button>
         </div>`;
       }).join('');
   }
@@ -529,6 +630,7 @@
       const s = Math.round((Date.now() - activeReqs[id].started_at) / 1000);
       el.textContent = s >= 60 ? `${Math.floor(s/60)}m ${s%60}s` : `${s}s`;
     });
+    if (openModalId && activeReqs[openModalId]) _renderModal(openModalId);
   }, 1000);
 
   // ── Auto-refresh ──────────────────────────────────────────────
@@ -547,6 +649,8 @@
 
   refresh();
   loadInstances();
+  loadBilling();
+  setInterval(loadBilling, 60000);
 </script>
 </body>
 </html>

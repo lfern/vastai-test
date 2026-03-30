@@ -42,7 +42,16 @@ async def _stream(body: dict, endpoint: str) -> AsyncGenerator[bytes, None]:
     req_id   = f"{endpoint[:3].upper()}-{int(time.time())}"
 
     log.info(f"[{req_id}] Petición — modelo={model} vastai={state.status}")
-    state.active_requests[req_id] = {"model": model, "started_at": time.time(), "endpoint": endpoint}
+    # Extraer mensaje completo para mostrarlo en el panel
+    msgs = body.get("messages", [])
+    last_user = next((m.get("content","") for m in reversed(msgs) if m.get("role") == "user"), "")
+    full_prompt = body.get("prompt", last_user)  # /api/generate usa "prompt"
+    preview = (full_prompt[:120] + "…") if len(full_prompt) > 120 else full_prompt
+    state.active_requests[req_id] = {
+        "model": model, "started_at": time.time(),
+        "endpoint": endpoint, "preview": preview,
+        "full_prompt": full_prompt,
+    }
 
     # Si la instancia no está corriendo, rechazar con mensaje claro
     if state.status != "running":
@@ -69,9 +78,23 @@ async def _stream(body: dict, endpoint: str) -> AsyncGenerator[bytes, None]:
                 timeout=httpx.Timeout(connect=10, read=3600, write=60, pool=10),
             ) as resp:
                 log.info(f"[{req_id}] HTTP {resp.status_code} de Vast.ai")
+                line_buf = b""
                 async for chunk in resp.aiter_bytes():
                     state.last_used  = time.time()
                     bytes_proxied   += len(chunk)
+                    # Acumular respuesta para el panel
+                    line_buf += chunk
+                    while b"\n" in line_buf:
+                        line, line_buf = line_buf.split(b"\n", 1)
+                        try:
+                            obj = json.loads(line)
+                            token = (obj.get("message") or {}).get("content") \
+                                    or obj.get("response") or ""
+                            if token and req_id in state.active_requests:
+                                state.active_requests[req_id]["response_so_far"] = \
+                                    state.active_requests[req_id].get("response_so_far", "") + token
+                        except Exception:
+                            pass
                     yield chunk
 
         elapsed = time.time() - t_start

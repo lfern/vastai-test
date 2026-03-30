@@ -4,11 +4,12 @@ Endpoints de administración y UI web.
   GET  /              → panel web
   GET  /health        → estado rápido (JSON)
   GET  /admin/status  → estado detallado (JSON)
-  POST /admin/launch  → lanzar instancia manualmente
-  POST /admin/stop    → parar instancia manualmente
-  POST /admin/destroy → destruir instancia (irreversible)
-  GET  /admin/instances → todas las instancias en Vast.ai
-  GET  /admin/logs    → últimas N líneas de log
+  POST /admin/launch         → lanzar instancia manualmente
+  POST /admin/stop           → parar instancia manualmente
+  POST /admin/destroy        → destruir instancia (irreversible)
+  POST /admin/restart-ollama → reiniciar proceso Ollama en la instancia (sin perder modelo)
+  GET  /admin/instances      → todas las instancias en Vast.ai
+  GET  /admin/logs           → últimas N líneas de log
 """
 import asyncio
 import logging
@@ -64,7 +65,10 @@ async def admin_status():
     stops_in_min = round(config.INACTIVITY_MIN - idle, 1) if idle is not None else None
     active = [
         {"req_id": k, "model": v["model"], "endpoint": v["endpoint"],
-         "elapsed_sec": round(now - v["started_at"], 1)}
+         "elapsed_sec": round(now - v["started_at"], 1),
+         "preview": v.get("preview", ""),
+         "full_prompt": v.get("full_prompt", ""),
+         "response_so_far": v.get("response_so_far", "")}
         for k, v in state.active_requests.items()
     ]
     return {
@@ -165,6 +169,55 @@ async def admin_destroy_any(instance_id: int):
 # ---------------------------------------------------------------------------
 # Logs
 # ---------------------------------------------------------------------------
+
+@router.post("/admin/restart-ollama")
+async def admin_restart_ollama():
+    """Reinicia el proceso Ollama en la instancia remota sin perder el modelo descargado."""
+    if not state.instance_id:
+        return JSONResponse({"ok": False, "message": "No hay instancia activa"}, status_code=409)
+
+    def _restart():
+        from vastai import _cli
+        # Intentar systemctl primero, luego pkill como fallback
+        rc, out, err = _cli("execute", str(state.instance_id),
+                            "pkill -f 'ollama serve' || true")
+        return rc, out or err
+
+    try:
+        loop = asyncio.get_event_loop()
+        rc, msg = await loop.run_in_executor(None, _restart)
+        log.info(f"[ADMIN] Ollama reiniciado en instancia {state.instance_id}: {msg}")
+        # Marcar como stopped para forzar re-verificación en la próxima petición
+        state.ollama_url = None
+        state.status = "stopped"
+        return {"ok": True, "message": "Ollama reiniciado. El proxy se reconectará automáticamente al arrancar."}
+    except Exception as e:
+        log.error(f"[ADMIN] Error reiniciando Ollama: {e}")
+        return JSONResponse({"ok": False, "message": str(e)}, status_code=500)
+
+
+@router.get("/admin/billing")
+async def admin_billing():
+    """Crédito disponible y gasto total de la cuenta Vast.ai."""
+    def _fetch():
+        from vastai import _cli
+        rc, out, err = _cli("show", "user", "--raw")
+        if rc != 0:
+            raise RuntimeError(err)
+        import json
+        d = json.loads(out)
+        return {
+            "credit":      round(d.get("credit", 0), 4),
+            "total_spend": round(abs(d.get("total_spend", 0)), 4),
+            "balance":     round(d.get("balance", 0), 4),
+        }
+    try:
+        loop = asyncio.get_event_loop()
+        data = await loop.run_in_executor(None, _fetch)
+        return {"ok": True, **data}
+    except Exception as e:
+        return JSONResponse({"ok": False, "message": str(e)}, status_code=500)
+
 
 @router.post("/admin/attach")
 async def admin_attach(instance_id: int = Query(...), ollama_url: str = Query(...)):

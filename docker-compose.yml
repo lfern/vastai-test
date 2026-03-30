@@ -27,6 +27,7 @@ services:
     volumes:
       - ./config:/home/node/.openclaw
       - ./workspace:/home/node/.openclaw/workspace
+    env_file: .env
     environment:
       - OLLAMA_API_KEY=ollama-local
     depends_on:
